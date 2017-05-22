@@ -1,0 +1,56 @@
+---
+
+- apt: { name: dnsutils }
+  delegate_to: '{{ bastion }}'
+  become: True
+  name: ensure dig available
+
+- command: dig +short +ndots=2 +search {{ inventory_hostname }}.{{ net }}
+  register: dig
+  delegate_to: '{{ bastion }}'
+  check_mode: False
+  changed_when: False
+  failed_when: dig.stdout == ''
+  name: get IP of remote node
+
+- command: ssh-keyscan {{ inventory_hostname }}.{{ net }}
+  register: pubkey
+  delegate_to: '{{ bastion }}'
+  changed_when: False
+  check_mode: False
+  name: Uses ssh-keyscan on {{ net }} bastion
+
+- set_fact: { user: "{{ lookup('env', 'USER') }}" }
+- &name
+  known_hosts:
+    hash_host: True
+    name: '{{ inventory_hostname }}.{{ net }}'
+    key: '{{ item }}'
+  with_items: &items '{{ pubkey.stdout_lines }}'
+  loop_control: &lc { label: '{{ item.split(" ")[:2] | join(" ") }}' }
+  delegate_to: '{{ bastion }}'
+  name: Uses known_hosts for name on {{ net }} {{ user }}@bastion
+
+- set_fact: { user: root }
+- { <<: *name, become: True }
+    
+- &ip
+  known_hosts:
+    hash_host: True
+    name: '{{ dig.stdout }}'
+    key: '{{ dig.stdout ~ " " ~ item.split(" ")[1:] | join(" ") }}'
+  with_items: *items
+  loop_control: *lc
+  delegate_to: '{{ bastion }}'
+  name: Uses known_hosts for ip on {{ net }} bastion
+
+- { <<: *ip, become: True }
+
+- known_hosts:
+    hash_host: True
+    name: '{{ ansible_ssh_host }}'
+    key: '{{ ansible_ssh_host ~ " " ~ item.split(" ")[1:] | join(" ") }}'
+  with_items: *items
+  loop_control: *lc
+  delegate_to: localhost
+  name: Uses known_hosts on localhost
